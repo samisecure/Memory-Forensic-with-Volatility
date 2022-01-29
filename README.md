@@ -58,6 +58,23 @@ Important note: if you supply the --apply-rules option, you might also see Okay 
   •	Processes that have exited will not be found by any of the methods except process object scanning and thread scanning (if an _EPROCESS or _ETHREAD still happens to be memory resident).
   Warning: After attackers gain access to kernel memory, they can manipulate anything they want. In this case, they could overwrite the _EPROCESS.ExitTime member to make it appear as if the process exited; thus the --apply-rules option would improperly report it as Okay. However, processes that have truly exited have zero threads and an invalid handle table—so you can always double-check what those fields contain
   
+Differentiating the output between the pslist and psscan plugins
+Highlighting the differences between the output from the pslist and psscan plugins, may not always be obvious. For this task, shell-based text processing is of significant use. By using the following commands, it will be possible to determine which
+differences were found:
+$ cat psscan.txt | awk '{print $2"\t"$3"\t"$4"\t"$6"\t"$7}' | grep -v "\-\-\-\-\-\-\-\-\-\-" | grep -v PPID | sort > psscan.txt
+$ cat pslist.txt | awk '{print $2"\t"$3"\t"$4"\t"$9"\t"$10}' | grep -v "\-\-\-\-\-\-\-\-\-\-" | grep -v PPID | sort > pslist_sorted.txt
+$ diff psscan_sorted.txt pslist_sorted.txt > pslist_psscan_diff.txt
+
+pstree
+This plugin takes the output of pslist and actually present them in child-parent relationship. Very useful plugin when the process listing is huge within the memory to see any suspicious relationship between child-parent.
+
+Thread
+The threads plugin is useful as it has the ability to provide detailed information about processes and threads that have since terminated or that may be hidden.
+vol.py threads -f memdump.vmem -p process_id
+
+you can check if process is terminated by checking it's thread exit time.To find ETHREAD objects in physical memory with pool tag scanning, use the thrdscan command. Since an ETHREAD contains fields that identify its parent process, you can use this technique to find hidden processes. One such use case is documented in the psxview command. Also, for verbose details, try the threads plugin
+vol.py thrdscan -f memdump.vmem -p process_id 
+
 
 
 
