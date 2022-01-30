@@ -17,26 +17,46 @@ Sometimes in process analysis by volatility pslist command doesn't show any outp
 This plug-in is used to scan for KPCR (Kernel Processor Control Region) structures. A KPCR is a data structure used by the kernel to store the processor-specific data. Kpcrscan searches for and dumps potential KPCR values. Each processor on a multi-core system has its own KPCR. 
 `vol.py -f test.vmem kpcrscan`
 
-***_EPROCESS, Process Environment Block,ActiveProcessLinks***
-- **_EPROCESS**
+
+## VAD (Virtual Access Discriptor)
+For each process, memory manager maintains a set of Virtual Address Descriptors (VADs) that describes the ranges of virtual memory address space reserved for that specific process. If any file is mapped in any of these memory regions, VAD node contains the full-path information for that file. This is really important information from the memory forensics perspective. If any dll or exe is mapped in one of these memory ranges then the VAD node (which is a Kernel structure) contains the full path on disk for that dll/exe. This information helps us in identifying any malicious activities like unlinking dll in the standard _PEB ldrmodules. The information is still available even if dll is unlinked from all 3 ldrmodules in _PEB (which is a user mode structure). VAD information can be used in revealing many attacks like dll injection, reflective code injection etc.
+
+### Volatility VAD Plugins 
+
+•	vadinfo: Displays the most verbose output, including the starting and ending addresses, the protection level, flags, and full paths to mapped files or DLLs.
+•	vadtree: In text mode, this plugin prints a tree-view of the nodes, so you can see the parent and child relationships on your console. It also supports generating the color-coded graphs shown in 
+![image](https://user-images.githubusercontent.com/41668480/151697883-0ab42c1c-97fb-4afc-a6fc-849f6c693e1d.png)
+• vaddump: Extracts the range of process memory each VAD node describes to a separate file on disk. Unlike memmap (discussed earlier), the output from this plugin is padded with zeros if any pages in the range are swapped to disk to maintain spatial integrity (offsets).
+
+###  Malfind
+The malfind command helps find hidden or injected code/DLLs in user mode memory, based on characteristics such as VAD tag and page permissions.
+Note: malfind does not detect DLLs injected into a process using CreateRemoteThread->LoadLibrary. DLLs injected with this technique are not hidden and thus you can view them with dlllist. The purpose of malfind is to locate DLLs that standard methods/tools do not see.
+` vol.py -f memdump.vmem  malfind -p <PID> `
+If you want to save extracted copies of the memory segments identified by malfind, just supply an output directory with -D or --dump-dir=DIR. 
+https://imphash.medium.com/windows-process-internals-a-few-concepts-to-know-before-jumping-on-memory-forensics-part-4-16c47b89e826
+
+___
+## _EPROCESS, Process Environment Block,ActiveProcessLinks
+### _EPROCESS
 Each Windows process is represented by an executive process structure called ***_EPROCESS***. EPROCESS contains many attributes related to process and it also points to a number of other related data structures.***Process Environment Block (PEB)*** is one of the structures that EPROCESS points to. PEB contains many process-related information like image name, loaded modules(dlls), image file path, command line parameters passed with the process etc.
 One of the fields in EPROCESS data structure is ***ActiveProcessLinks*** which is a pointer to a CIRCULAR DOUBLY LINK LIST that tracks all active processes. The modules like pslist picks up this point and traverse through this series of pointers to get the list of the active processes. also  this is used by tools such as Windows Task Manager and tasklist to display the running processes to the system. 
 
-- **EPROCESS and SID***
+### EPROCESS and SID
  each _EPROCESS points to a list of security identifiers (SIDs) and privilege data. This is one of the primary ways the kernel enforces security and access control. 
 
-- **Process Environment Block(PEB)**
+### Process Environment Block(PEB)
 Process Environment Block (PEB) is one of the structures that EPROCESS points to. PEB contains many process-related information like image name, loaded modules(dlls), image file path, command line parameters passed with the process etc.
 
-- **ActiveProcessLinks**
+### ActiveProcessLinks
 Kernel uses doubly link list to track the processes. Each Process has this doubly link list which is pointed by ActiveProcessLinks field of the previous process. All EPROCESS blocks are connected in a circular way by DoublyLinkList. Hence, by traversing this list we can get all the active processes on the system.
 ActiveProcessLinks is a LIST_ENTRY structure and it is a circular doubly link list pointing to the node in the next EPROCESS for a different process.
  A forward pointer from one process' EPROCESS structure points to the next process' EPROCESS structure; a backward pointer specifies the address of the previous process' EPROCESS structure. And, this doubly linked list of EPROCESS structure is pointed by PsActiveProcessHead
  
-- **Unlinked processes**
+### Unlinked processes
 malicious process can remove EPROCESS block from this list,while continuing to run. This list is not used by the kernel scheduler to actually change context and execute the process.Therefore, one method used by rootkits to hide processes is simply to unlink the process from the active process list. Once unlinked , rootkit nicely hides the process from most standard process enumeration tools.
 Unlinked process continues to run normally even after the modification to the list, because scheduling in the Windows kernel is based on threads, not processes.Manipulating kernel structures in memory to hide the process is called as Direct Kernel Object Manipulation (DKOM). This can be done by loading a malicious driver which will full access to kernel objects or with API function called ZWSystemDebugControl.
 
+___
 ## Pslist
 Get all the active process by traversing through the doubly link lists.
 Method 1:!PsActiveProcessHead is the pointer to the doubly linked list (ActiveProcessLinks) of the EPROCESS of the Process “System”, the first process. By getting a pointer to one of the nodes in the doubly linked list, we can traverse through all the active processes connected via doubly linked list.
@@ -145,6 +165,7 @@ you can check if process is terminated by checking it's thread exit time.To find
 
 ### Threads in Kernel Mode
 When kernel modules create new threads with PsCreateSystemThread, the System process (PID 4 on XP and later) becomes the owner of the thread. In other words, the System process is the default home for threads that start in kernel mode. When parsing through a memory dump, you can distinguish these system threads from others based on the following factors:
+
 - The _ETHREAD.SystemThread value is 1.
 - The _ETHREAD.CrossThreadFlags member has the PS_CROSS_THREAD_FLAGS_SYSTEM flag set.
 - The owning process is PID 4.
@@ -234,7 +255,10 @@ To display the DLLs for a process that is hidden or unlinked by a rootkit, first
  
  
 ### LDRModule
-detect unlinked DLL and non memory maped files. DLL are tracked in three different linked lists in the PEB for each process. Stealty malware can unlink loaded DLL from these lists.this plugin query each list and display the result for comparision. if you dont see information in mapped path column, this indicate DLL was not loaded using windows API. and this is sign of dll injection.
+detect unlinked DLL and non memory maped files.There are many ways to hide a DLL. One of the ways involves unlinking the DLL from one (or all) of the linked lists in the PEB. However, when this is done, there is still information contained within the VAD (Virtual Address Descriptor) which identifies the base address of the DLL and its full path on disk. To cross-reference this information (known as memory mapped files) with the 3 PEB lists, use the ldrmodules command.For each memory mapped PE file, the ldrmodules command prints True or False if the PE exists in the PEB lists. if you dont see information in mapped path column, this indicate DLL was not loaded using windows API. and this is sign of dll injection. also Since the PEB and the DLL lists that it contains all exist in user mode, its also possible for malware to hide (or obscure) a DLL by simply overwriting the path. Tools that only look for unlinked entries may miss the fact that malware could overwrite C:\bad.dll to show C:\windows\system32\kernel32.dll. So you can also pass -v or --verbose to ldrmodules to see the full path of all entries.
+ python vol.py -f memdump.vmem --profile=<profile> ldrmodules -v
+ 
+ For concrete examples, see QuickPost: Flame & Volatility.
 
 ### DLLDump
 To extract a DLL from a process’s memory space and dump it to disk for analysis, use the dlldump command. The syntax is nearly the same as what we’ve shown for dlllist above. You can:
