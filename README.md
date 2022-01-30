@@ -176,7 +176,49 @@ SetThreadToken API) and new processes related to impersonation without explorer 
 
 Refrence: https://github.com/kslgroup/TokenImp-Token_Impersonation_Detection
 
-___
+ ___
+ 
+ ## SID
+ You can map the SID string to a username by querying the registry. The following command shows an example of how to do this:
+vol.py -f memory.img --profile=<profile> printkey -K "Microsoft\Windows NT\CurrentVersion\ProfileList\S-1-5-21-4010035002-774237572-2085959976-1000" 
+ 
+ ## Detecting Lateral Movement
+ If you need to associate a process with a user account or investigate potential lateral movement attempts, use the getsids plugin. 
+ 
+ `  vol.py –f memory.img --profile=<profile> getsids –p <PID>  `
+ 
+ Maybe one SID doesn’t display an account name. On systems that don’t authenticate to a domain, you’ll see the local user’s name next to the SID. In this case, however, because Volatility doesn’t have access to the remote machine’s registry (that is, the domain controller or Active Directory server), it cannot perform the resolution. 
+
+ ## Privilege
+Privileges are another critical component involved in security and access control. A privilege is the permission to perform a specific task, such as debugging a process, shutting down the computer, changing the time zone, or loading a kernel driver. Before a process can enable a privilege, the privilege must be present in the process’ token. 
+few ways to enable privileges: 
+ - Enabled by default: The LSP can specify that privileges be enabled by default when a process starts.
+ - 	Inheritance: Unless otherwise specified, child processes inherit the security context of their creator (parent).
+ - 	Explicit enabling: A process can explicitly enable a privilege using the AdjustTokenPrivileges API
+ 
+ ![image](https://user-images.githubusercontent.com/41668480/151694808-875af902-a374-4fd1-9410-b406a7877cdc.png)
+
+ What	can	you	do	with	elevated	privileges:	
+– Debug	programs	
+– Take	ownership	of	objects	
+– Modify	files	and	directories	
+– Impersonate	a	client	aJer	authen2ca2on	
+– Load	and	unload	device	drivers	
+– Create	a	token	object	
+– Act	as	part	of	the	opera2ng	system,	etc.
+ https://downloads.volatilityfoundation.org//omfw/2012/OMFW2012_Gurkok.pdf
+ 
+From a forensic perspective, you should be most concerned with the following privileges when they’ve been explicitly enabled:
+ 	- SeBackupPrivilege: This grants read access to any file on the file system, regardless of its specified access control list (ACL). Attackers can leverage this privilege to copy locked files.
+ - 	SeDebugPrivilege: This grants the ability to read from or write to another process’ private memory space. It allows malware to bypass the security boundaries that typically isolate processes. Practically all malware that performs code injection from user mode relies on enabling this privilege.
+ - 	SeLoadDriverPrivilege: This grants the ability to load or unload kernel drivers.
+ - 	SeChangeNotifyPrivilege: This allows the caller to register a callback function that gets executed when specific files and directories change. Attackers can use this to determine immediately when one of their configuration or executable files are removed by antivirus or administrators.
+ - 	SeShutdownPrivilege: This allows the caller to reboot or shut down the system. Some infections, such as those that modify the Master Boot Record (MBR) don’t activate until the next time the system boots. Thus, you’ll often see malware trying to manually speed up the procedure by invoking a reboot. 
+ 
+ You can see a process privileges with its attributes (present, enabled, and/or enabled by default). and check if the process need to enable that privileges or not to detect malicious behavior.
+ 
+ ` vol.py -f memdump.vmem.img privs -p <PID> `
+ ___
 
 ## DLL
 ### Dlllis
@@ -211,29 +253,5 @@ To dump a PE file that doesn’t exist in the DLLs list (for example, due to cod
 ` vol.py --profile=<profile> -f windump.vmem dlldump --pid=<PID> -D out --base=<Base Address of the PE>
 ` vol.py --profile=<profile> -f windump.vmem dlldump -o <Physical offset of Process>  -D out --base=<Base address of the PE> `
 
- ___
- 
- ## SID
- You can map the SID string to a username by querying the registry. The following command shows an example of how to do this:
-vol.py -f memory.img --profile=<profile> printkey -K "Microsoft\Windows NT\CurrentVersion\ProfileList\S-1-5-21-4010035002-774237572-2085959976-1000" 
- 
- ## Detecting Lateral Movement
- If you need to associate a process with a user account or investigate potential lateral movement attempts, use the getsids plugin. 
- 
- `  vol.py –f memory.img --profile=<profile> getsids –p <PID>  `
- 
- Maybe one SID doesn’t display an account name. On systems that don’t authenticate to a domain, you’ll see the local user’s name next to the SID. In this case, however, because Volatility doesn’t have access to the remote machine’s registry (that is, the domain controller or Active Directory server), it cannot perform the resolution. 
 
- ## Priviledge
-Privileges are another critical component involved in security and access control. A privilege is the permission to perform a specific task, such as debugging a process, shutting down the computer, changing the time zone, or loading a kernel driver. Before a process can enable a privilege, the privilege must be present in the process’ token. 
-few ways to enable privileges: 
- - Enabled by default: The LSP can specify that privileges be enabled by default when a process starts.
- - 	Inheritance: Unless otherwise specified, child processes inherit the security context of their creator (parent).
- - 	Explicit enabling: A process can explicitly enable a privilege using the AdjustTokenPrivileges API
-From a forensic perspective, you should be most concerned with the following privileges when they’ve been explicitly enabled:
- 	- SeBackupPrivilege: This grants read access to any file on the file system, regardless of its specified access control list (ACL). Attackers can leverage this privilege to copy locked files.
- - 	SeDebugPrivilege: This grants the ability to read from or write to another process’ private memory space. It allows malware to bypass the security boundaries that typically isolate processes. Practically all malware that performs code injection from user mode relies on enabling this privilege.
- - 	SeLoadDriverPrivilege: This grants the ability to load or unload kernel drivers.
- - 	SeChangeNotifyPrivilege: This allows the caller to register a callback function that gets executed when specific files and directories change. Attackers can use this to determine immediately when one of their configuration or executable files are removed by antivirus or administrators.
- - 	SeShutdownPrivilege: This allows the caller to reboot or shut down the system. Some infections, such as those that modify the Master Boot Record (MBR) don’t activate until the next time the system boots. Thus, you’ll often see malware trying to manually speed up the procedure by invoking a reboot. 
 
