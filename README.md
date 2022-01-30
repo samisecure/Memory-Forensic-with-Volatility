@@ -107,7 +107,22 @@ To check Legitimacy for LSASS and SVCHOST processes.  This plugin will also look
 - It checks parent-child relationship. svchost.exe should always be a child of services.exe and lsass.exe should be the child of wininit.exe for systems running Vista or better, or winlogon.exe for systems running XP or older.
 - It compares each system process' creation time to that of its parent, and if the system process was created more than 10 seconds after its parent it is flagged. 
 - It compares the command line arguments of each system process to a list of expect arguments. 
+` vol.py malsysproc -f memdump.vmem --profile=<profile> `
 
+___
+## Malconfscan
+MalConfScan is a Volatility plugin extracts configuration data of known malware. This tool searches for malware in memory images and dumps configuration data. In addition, this tool has a function to list strings to which malicious code refers. MalConfScan has a function to list strings to which malicious code refers. Configuration data is usually encoded by malware. Malware writes decoded configuration data to memory, it may be in memory. This feature may list decoded configuration data.
+
+Export known malware configuration
+` python vol.py malconfscan -f images.mem --profile=Win7SP1x64 `
+
+Export known malware configuration for Linux
+` python vol.py linux_malconfscan -f images.mem --profile=LinuxDebianx64 `
+
+List the referenced strings
+` python vol.py malstrscan -f images.mem --profile=Win7SP1x64 `
+Refrence: https://github.com/JPCERTCC/MalConfScan
+___
 ## Thread
 The threads plugin is useful as it has the ability to provide detailed information about processes and threads that have since terminated or that may be hidden.
 
@@ -130,6 +145,25 @@ The threads plugin can help you identify attempts to hide in the described manne
 > Rootkits can easily bypass the orphan thread detection technique by patching the _ETHREAD.StartAddress values to point at a known driver. In (http://www.virusbtn.com/pdf/conference_slides/2008/Kasslin-Florio-VB2008.pdf),  Kimmo Kasslin and Elia Floria noted that the third generation of Mebroot started applying these patches to increase its stealth.
 ___
 
+### TokenImp
+**Token and Token Impersonation** : An access token is an object that describes the security context of a process or a thread. The information inside a token includes the identity and privileges of the user account associated with the process or thread. Every process has a primary token that describes the security context of the user account associated with the process. . Moreover, a thread can impersonate a client account. Impersonation allows the thread to interact with securable objects using the client's security context. A thread that is impersonating a client has both a primary token and an impersonation token. 
+The most common tool that allows the impersonation of another user is a built-in tool called RunAs and allows you to run an application as other users if you know theirs credentials. Token impersonation is a technique used often by red teams and attackers in order to impersonate another user logged on in order to commit some tasks as a legitimate user, or to perform privilege escalation into SYSTEM account.An example for usage in the wild can be found in APT28, Azorult, Lazarus Group, Duqo and more
+
+**User Account Control (UAC)**: Since Windows Vista, UAC became a part of Windows security features. It basically means that even
+though an account is administrative, every application won’t run in administrative context until it will be
+approved by the user itself or inherit the high context from the parent process. There are many techniques to bypass the UAC in the wild, examples can be found [here](https://attack.mitre.org/techniques/T1088/). 
+A method worth mentioning is utilizing the fact that Microsoft's signed executables can run in high privileged context without the user’s permission and interaction when they use operations such as IFileOperation COM object. (Presented in [Cobalt Strike’s](https://www.cobaltstrike.com/) bypassuac command).
+
+**TokenImp**: The plugin’s goal is to detect token impersonation attacks, and perhaps detect suspicious behavior that can lead to zero day attacks. TokenImp plugin comes in handy when you want to map administrative user’s UAC status or every other user’s session, detect token impersonation inside existing processes (i.e. ImpersonateLoggedOnUser,
+SetThreadToken API) and new processes related to impersonation without explorer (i.e.CreateProcessWithTokenW API). The plugin supports all windows platforms from Windows vista and higher and tested on Windows 7,Windows 2012 and Windows 10.
+
+**Detects only impersonation for active threads:**
+` vol.py -f memdump.vmem --profile=<profile> tokenimp `
+
+**Detects all malicious processes that created with impersonated token:**
+` vol.py -f memdump.vmem --profile=<profile> tokenimp -c `
+
+Refrence: https://github.com/kslgroup/TokenImp-Token_Impersonation_Detection
 
 
 
