@@ -41,8 +41,13 @@ Method 2: Another way to traverse through the process list is to pick one proces
 
 `vol.py --profile=<profile> -f memdump.mem pslist`
 
+By default, pslist shows virtual offsets for the _EPROCESS but the physical offset can be obtained with the -P switch:
+
+` vol.py -f memdump.vmem --profile=<profile> pslist -P ` 
+
 ## Psscan
 The psscan module doesn't trust the linked list of the processes, and, instead, searches memory by heuristically looking for EPROCESS structure that represent processes.Hence, it lists all processes that are even hidden by rootkit and not shown by pslist command of volatility or tasklist command of windows. Any discrepancy between process list shown by pslist and psscan suggests that rootkit is installed. also this command shows processes that have been terminated.
+If you want to investigate a hidden process (such as displaying its DLLs), then you’ll need physical offset of the _EPROCESSobject, which is shown in the far left column. Almost all process-related plugins take a --OFFSET parameter so that you can work with hidden processes.
 
 `vol.py --profile=<profile> -f memdump.mem psscan`
 
@@ -99,6 +104,7 @@ The plugin will check for the following:
 - SPath = Looks for suspicious paths like temp directory 
 
 ` vol.py malprocfind -f memdump.vmem --profile=<profile> `
+` vol.py malprocfind -x -f memdump.vmem --profile=<profile>  "-x includes closed processes" ` 
 ___
 ## malsysprocfind 
 To check Legitimacy for LSASS and SVCHOST processes.  This plugin will also look for processes named similarly to svchost and lsass such as lssas or scvhost. List of items that this plugin checks:
@@ -132,7 +138,7 @@ you can check if process is terminated by checking it's thread exit time.To find
 
 `vol.py thrdscan -f memdump.vmem -p process_id `
 
-## Threads in Kernel Mode
+### Threads in Kernel Mode
 When kernel modules create new threads with PsCreateSystemThread, the System process (PID 4 on XP and later) becomes the owner of the thread. In other words, the System process is the default home for threads that start in kernel mode. When parsing through a memory dump, you can distinguish these system threads from others based on the following factors:
 - The _ETHREAD.SystemThread value is 1.
 - The _ETHREAD.CrossThreadFlags member has the PS_CROSS_THREAD_FLAGS_SYSTEM flag set.
@@ -145,7 +151,7 @@ The threads plugin can help you identify attempts to hide in the described manne
 > Rootkits can easily bypass the orphan thread detection technique by patching the _ETHREAD.StartAddress values to point at a known driver. In (http://www.virusbtn.com/pdf/conference_slides/2008/Kasslin-Florio-VB2008.pdf),  Kimmo Kasslin and Elia Floria noted that the third generation of Mebroot started applying these patches to increase its stealth.
 ___
 
-### TokenImp
+## TokenImp
 **Token and Token Impersonation** : An access token is an object that describes the security context of a process or a thread. The information inside a token includes the identity and privileges of the user account associated with the process or thread. Every process has a primary token that describes the security context of the user account associated with the process. . Moreover, a thread can impersonate a client account. Impersonation allows the thread to interact with securable objects using the client's security context. A thread that is impersonating a client has both a primary token and an impersonation token. 
 The most common tool that allows the impersonation of another user is a built-in tool called RunAs and allows you to run an application as other users if you know theirs credentials. Token impersonation is a technique used often by red teams and attackers in order to impersonate another user logged on in order to commit some tasks as a legitimate user, or to perform privilege escalation into SYSTEM account.An example for usage in the wild can be found in APT28, Azorult, Lazarus Group, Duqo and more
 
@@ -164,6 +170,32 @@ SetThreadToken API) and new processes related to impersonation without explorer 
 ` vol.py -f memdump.vmem --profile=<profile> tokenimp -c `
 
 Refrence: https://github.com/kslgroup/TokenImp-Token_Impersonation_Detection
+
+___
+
+## DLL
+### Dlllis
+To display a process’s loaded DLLs, use the dlllist command. It walks the doubly-linked list of _LDR_DATA_TABLE_ENTRY structures which is pointed to by the PEB's InLoadOrderModuleList. DLLs are automatically added to this list when a process calls LoadLibrary (or some derivative such as LdrLoadDll) and they aren't removed until FreeLibrary is called and the reference count reaches zero. The load count column tells you if a DLL was statically loaded (i.e. as a result of being in the exe or another DLL's import table) or dynamically loaded.
+
+` vol.py -f memdump.vmem --profile=<profile> dlllist -p 1892 `
+
+To display the DLLs for a process that is hidden or unlinked by a rootkit, first use the psscan to get the physical offset of the EPROCESS object and supply it with — offset=OFFSET. The plugin will “bounce back” and determine the virtual address of the EPROCESS and then acquire an address space in order to access the PEB.
+
+` vol.py -f memdump.vmem --profile=<profile> dlllist --offset=<pysical offeset of process> ` 
+
+ ***Notice when you  analyze a Wow64 process***: Wow64 processes have a limited list of DLLs in the PEB lists, but that doesn't mean they're the only DLLs loaded in the process address space. Thus Volatility will remind you to use the ***ldrmodules*** instead for these processes.
+ 
+### DLLDump
+To extract a DLL from a process’s memory space and dump it to disk for analysis, use the dlldump command. The syntax is nearly the same as what we’ve shown for dlllist above. You can:
+- Dump all DLLs from all processes
+- Dump all DLLs from a specific process > (with --pid=PID)
+- Dump all DLLs from a hidden/unlinked process > (with --offset=OFFSET)
+- Dump a PE from anywhere in process memory > (with --base=BASEADDR), this option is useful for extracting hidden DLLs
+- Dump one or more DLLs that match a regular expression > (--regex=REGEX), case sensitive or not (--ignore-case)
+To specify an output directory, use >--dump-dir=DIR or -d DIR.
+
+` vol.py -f memdump.vmem --profile=<profile> dlldump -D dlls/ `
+
 
 
 
