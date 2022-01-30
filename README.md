@@ -22,6 +22,9 @@ This plug-in is used to scan for KPCR (Kernel Processor Control Region) structur
 Each Windows process is represented by an executive process structure called ***_EPROCESS***. EPROCESS contains many attributes related to process and it also points to a number of other related data structures.***Process Environment Block (PEB)*** is one of the structures that EPROCESS points to. PEB contains many process-related information like image name, loaded modules(dlls), image file path, command line parameters passed with the process etc.
 One of the fields in EPROCESS data structure is ***ActiveProcessLinks*** which is a pointer to a CIRCULAR DOUBLY LINK LIST that tracks all active processes. The modules like pslist picks up this point and traverse through this series of pointers to get the list of the active processes. also  this is used by tools such as Windows Task Manager and tasklist to display the running processes to the system. 
 
+- **EPROCESS and SID***
+ each _EPROCESS points to a list of security identifiers (SIDs) and privilege data. This is one of the primary ways the kernel enforces security and access control. 
+
 - **Process Environment Block(PEB)**
 Process Environment Block (PEB) is one of the structures that EPROCESS points to. PEB contains many process-related information like image name, loaded modules(dlls), image file path, command line parameters passed with the process etc.
 
@@ -38,6 +41,8 @@ Unlinked process continues to run normally even after the modification to the li
 Get all the active process by traversing through the doubly link lists.
 Method 1:!PsActiveProcessHead is the pointer to the doubly linked list (ActiveProcessLinks) of the EPROCESS of the Process “System”, the first process. By getting a pointer to one of the nodes in the doubly linked list, we can traverse through all the active processes connected via doubly linked list.
 Method 2: Another way to traverse through the process list is to pick one process and identify its pointer to the circular doubly linked list and traverse through the list.
+
+![image](https://user-images.githubusercontent.com/41668480/151692590-35260ecf-a3bf-471c-8c85-8a304f302419.png)
 
 `vol.py --profile=<profile> -f memdump.mem pslist`
 
@@ -152,7 +157,7 @@ The threads plugin can help you identify attempts to hide in the described manne
 ___
 
 ## TokenImp
-**Token and Token Impersonation** : An access token is an object that describes the security context of a process or a thread. The information inside a token includes the identity and privileges of the user account associated with the process or thread. Every process has a primary token that describes the security context of the user account associated with the process. . Moreover, a thread can impersonate a client account. Impersonation allows the thread to interact with securable objects using the client's security context. A thread that is impersonating a client has both a primary token and an impersonation token. 
+**Token and Token Impersonation** : An access token is an object that describes the security context of a process or a thread. The information inside a token includes the identity and privileges of the user account associated with the process or thread. Every process has a primary token that describes the security context of the user account associated with the process. Moreover, a thread can impersonate a client account. Impersonation allows the thread to interact with securable objects using the client's security context. A thread that is impersonating a client has both a primary token and an impersonation token. 
 The most common tool that allows the impersonation of another user is a built-in tool called RunAs and allows you to run an application as other users if you know theirs credentials. Token impersonation is a technique used often by red teams and attackers in order to impersonate another user logged on in order to commit some tasks as a legitimate user, or to perform privilege escalation into SYSTEM account.An example for usage in the wild can be found in APT28, Azorult, Lazarus Group, Duqo and more
 
 **User Account Control (UAC)**: Since Windows Vista, UAC became a part of Windows security features. It basically means that even
@@ -185,18 +190,50 @@ To display the DLLs for a process that is hidden or unlinked by a rootkit, first
 
  ***Notice when you  analyze a Wow64 process***: Wow64 processes have a limited list of DLLs in the PEB lists, but that doesn't mean they're the only DLLs loaded in the process address space. Thus Volatility will remind you to use the ***ldrmodules*** instead for these processes.
  
+ 
+### LDRModule
+detect unlinked DLL and non memory maped files. DLL are tracked in three different linked lists in the PEB for each process. Stealty malware can unlink loaded DLL from these lists.this plugin query each list and display the result for comparision. if you dont see information in mapped path column, this indicate DLL was not loaded using windows API. and this is sign of dll injection.
+
 ### DLLDump
 To extract a DLL from a process’s memory space and dump it to disk for analysis, use the dlldump command. The syntax is nearly the same as what we’ve shown for dlllist above. You can:
 - Dump all DLLs from all processes
-- Dump all DLLs from a specific process > (with --pid=PID)
-- Dump all DLLs from a hidden/unlinked process > (with --offset=OFFSET)
-- Dump a PE from anywhere in process memory > (with --base=BASEADDR), this option is useful for extracting hidden DLLs
-- Dump one or more DLLs that match a regular expression > (--regex=REGEX), case sensitive or not (--ignore-case)
-To specify an output directory, use >--dump-dir=DIR or -d DIR.
+- Dump all DLLs from a specific process `(with --pid=PID)`
+- Dump all DLLs from a hidden/unlinked process `(with --offset=OFFSET)`
+- Dump a PE from anywhere in process memory `(with --base=BASEADDR)`, this option is useful for extracting hidden DLLs
+- Dump one or more DLLs that match a regular expression `(--regex=REGEX)`, case sensitive or not `(--ignore-case)`
+To specify an output directory, use `--dump-dir=DIR or -d DIR`.
 
 ` vol.py -f memdump.vmem --profile=<profile> dlldump -D dlls/ `
 
+If the extraction fails, as it did for a few DLLs above, it probably means that some of the memory pages in that DLL were not memory resident (due to paging). In particular, this is a problem if the first page containing the PE header and thus the PE section mappings is not available. In these cases you can still extract the memory segment using the vaddump command, but you’ll need to manually rebuild the PE header and fixup the sections (if you plan on analyzing in IDA Pro) as described in [Recovering CoreFlood Binaries with Volatility](https://mnin.blogspot.com/2008/11/recovering-coreflood-binaries-with.html).
 
+To dump a PE file that doesn’t exist in the DLLs list (for example, due to code injection or malicious unlinking), just specify the base address of the PE in process memory:
+` vol.py --profile=<profile> -f windump.vmem dlldump --pid=<PID> -D out --base=<Base Address of the PE>
+` vol.py --profile=<profile> -f windump.vmem dlldump -o <Physical offset of Process>  -D out --base=<Base address of the PE> `
 
+ ___
+ 
+ ## SID
+ You can map the SID string to a username by querying the registry. The following command shows an example of how to do this:
+vol.py -f memory.img --profile=<profile> printkey -K "Microsoft\Windows NT\CurrentVersion\ProfileList\S-1-5-21-4010035002-774237572-2085959976-1000" 
+ 
+ ## Detecting Lateral Movement
+ If you need to associate a process with a user account or investigate potential lateral movement attempts, use the getsids plugin. 
+ 
+ `  vol.py –f memory.img --profile=<profile> getsids –p <PID>  `
+ 
+ Maybe one SID doesn’t display an account name. On systems that don’t authenticate to a domain, you’ll see the local user’s name next to the SID. In this case, however, because Volatility doesn’t have access to the remote machine’s registry (that is, the domain controller or Active Directory server), it cannot perform the resolution. 
 
+ ## Priviledge
+Privileges are another critical component involved in security and access control. A privilege is the permission to perform a specific task, such as debugging a process, shutting down the computer, changing the time zone, or loading a kernel driver. Before a process can enable a privilege, the privilege must be present in the process’ token. 
+few ways to enable privileges: 
+ - Enabled by default: The LSP can specify that privileges be enabled by default when a process starts.
+ - 	Inheritance: Unless otherwise specified, child processes inherit the security context of their creator (parent).
+ - 	Explicit enabling: A process can explicitly enable a privilege using the AdjustTokenPrivileges API
+From a forensic perspective, you should be most concerned with the following privileges when they’ve been explicitly enabled:
+ 	- SeBackupPrivilege: This grants read access to any file on the file system, regardless of its specified access control list (ACL). Attackers can leverage this privilege to copy locked files.
+ - 	SeDebugPrivilege: This grants the ability to read from or write to another process’ private memory space. It allows malware to bypass the security boundaries that typically isolate processes. Practically all malware that performs code injection from user mode relies on enabling this privilege.
+ - 	SeLoadDriverPrivilege: This grants the ability to load or unload kernel drivers.
+ - 	SeChangeNotifyPrivilege: This allows the caller to register a callback function that gets executed when specific files and directories change. Attackers can use this to determine immediately when one of their configuration or executable files are removed by antivirus or administrators.
+ - 	SeShutdownPrivilege: This allows the caller to reboot or shut down the system. Some infections, such as those that modify the Master Boot Record (MBR) don’t activate until the next time the system boots. Thus, you’ll often see malware trying to manually speed up the procedure by invoking a reboot. 
 
