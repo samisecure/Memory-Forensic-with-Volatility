@@ -277,5 +277,72 @@ To dump a PE file that doesn’t exist in the DLLs list (for example, due to cod
 ` vol.py --profile=<profile> -f windump.vmem dlldump --pid=<PID> -D out --base=<Base Address of the PE>
 ` vol.py --profile=<profile> -f windump.vmem dlldump -o <Physical offset of Process>  -D out --base=<Base address of the PE> `
 
+___
+ ## YARASCAN
+ Volatility has several built-in scanning engines to help you find simple patterns like pool tags in physical or virtual address spaces. However, if you need to scan for more complex things like regular expressions or compound rules, you can use the yarascan command. You can create a YARA rules file and specify it as --yara-file=RULESFILE. Or, if you're just looking for something simple, and only plan to do the search a few times, then you can specify the criteria like --yara-rules=RULESTEXT.
+To search for signatures defined in the file rules.yar, in any process, and simply display the results on screen: 
+ 
+` python vol.py -f zeus.vmem yarascan --yara-file=/path/to/rules.yar `
+ 
+To search for a simple string in any process and dump the memory segments containing a match:
+ 
+` python vol.py -f zeus.vmem yarascan -D dump_files --yara-rules="simpleStringToFind" ` 
+ 
+To Search for a given byte pattern in a particular process:
+ 
+` python vol.py -f zeus.vmem yarascan --yara-rules="{eb 90 ff e4 88 32 0d}" --pid=624 `
+___
+ ## SVCSCAN
+Volatility is the only memory forensics framework with the ability to list services without using the Windows API on a live machine. To see which services are registered on your memory image, use the svcscan command. The output shows the process ID of each service (if its active and pertains to a usermode process), the service name, service display name, service type, and current status. It also shows the binary path for the registered service - which will be an EXE for usermode services and a driver name for services that run from kernel mode.
+ ` python vol.py -f memdump.vmem --profile=<profile> svcscan `
+ A new option (--verbose) is available starting with Volatility 2.3. This option checks the ServiceDll registry key and reports which DLL is hosting the service. This is a critical capability since malware very commonly installs services using svchost.exe (the shared host service process) and implements the actual malicious code in a DLL.
+ ` python vol.py -f memdump.vmem svcscan --verbose --profile=<profile> `
 
 
+ ____
+ ## Kernel Memory and Objects
+ ## modules
+ To view the list of kernel drivers loaded on the system, use the modules command. This walks the doubly-linked list of LDR_DATA_TABLE_ENTRY structures pointed to by PsLoadedModuleList. Similar to the pslist command, this relies on finding the KDBG structure. In rare cases, you may need to use kdbgscan to find the most appropriate KDBG structure address and then supply it to this plugin like --kdbg=ADDRESS.
+It cannot find hidden/unlinked kernel drivers, however modscan serves that purpose. Also, since this plugin uses list walking techniques, you typically can assume that the order the modules are displayed in the output is the order they were loaded on the system. 
+ 
+ ` python vol.py -f ~/Desktop/win7_trial_64bit.raw --profile=Win7SP0x64 modules `
+ 
+ ## modscan
+ The modscan command finds LDR_DATA_TABLE_ENTRY structures by scanning physical memory for pool tags. This can pick up previously unloaded drivers and drivers that have been hidden/unlinked by rootkits. Unlike modules the order of results has no relationship with the order in which the drivers loaded. As you can see below, DumpIt.sys was found at the lowest physical offset, but it was probably one of the last drivers to load (since it was used to acquire memory).
+ 
+ ` python vol.py -f ~/Desktop/win7_trial_64bit.raw --profile=Win7SP0x64 modscan `
+ 
+ 
+ ## Moddump
+ To extract a kernel driver to a file, use the moddump command. Supply the output directory with -D or --dump-dir=DIR. Without any additional parameters, all drivers identified by modlist will be dumped. If you want a specific driver, supply a regular expression of the driver's name with --regex=REGEX or the module's base address with --base=BASE.
+ 
+ ` python vol.py -f ~/Desktop/win7_trial_64bit.raw --profile=Win7SP0x64 moddump -D drivers/ `
+ 
+ ## SSDT (System Service Descriptor Table)
+ The SSDT maps syscalls to kernel function addresses. When a syscall is issued by a user space application, it contains the service index as parameter to indicate which syscall is called. The SSDT is then used to resolve the address of the corresponding function within ntoskrnl.exe. In modern Windows kernels, two SSDTs are used: One for generic routines (KeServiceDescriptorTable) and a second (KeServiceDescriptorTableShadow) for graphical routines. A parameter passed by the calling userspace application determines which SSDT shall be used.
+  This table is a link between Ring3's Win32 API and Ring0's kernel API. SSDT not only contains a huge address index table, but also contains some other useful information, such as the base address of the address index, the number of service functions and so on. By modifying the function address of this table, the common Windows functions and APIs can be Hook, so as to achieve the purpose of filtering and monitoring some concerned system actions. Some HIPS, anti-virus software, system monitoring, registry monitoring software often use this interface to achieve their own monitoring module.
+Windows over NT 4.0 operating system By default, there are two system service description tables, which correspond to two different types of system services: KeService Descriptor Table and KeService Descriptor Table Shadow. KeService Descriptor Table mainly deals with system calls from Ring 3-tier Kernel 32.dll, while KeService Descriptor Table Shadow mainly deals with system calls from Ring 3-tier Kernel 32.dll. System calls from User32.dll and GDI32.dll, and KeService Descriptor Table is exported in ntoskrnl.exe(Windows operating system kernel files, including kernel and execution layer), while KeService Descriptor Table Shadow is not exported by Windows operating system, and all content about SSDT is done through KeService Descriptor Table.
+ 
+ ## SSDT Hooking
+ To filter all functions which point to ntoskrnl.exe and win32k.sys, you can use egrep on command-line. This will only show hooked SSDT functions.
+ `  python vol.py -f ~/Desktop/win7_trial_64bit.raw --profile=Win7SP0x64 ssdt | egrep -v '(ntos|win32k)' `
+ Note that the NT module on your system may be ntkrnlpa.exe or ntkrnlmp.exe - so check that before using egrep of you'll be filtering the wrong module name. Also be aware that this isn't a hardened technique for finding hooks, as malware can load a driver named win32ktesting.sys and bypass your filter.
+ 
+ ## driverscan
+ To find DRIVER_OBJECTs in physical memory using pool tag scanning, use the driverscan command. This is another way to locate kernel modules, although not all kernel modules have an associated DRIVER_OBJECT. The DRIVER_OBJECT is what contains the 28 IRP (Major Function) tables, thus the driverirp command is based on the methodology used by driverscan.
+ 
+ ` python vol.py -f ~/Desktop/win7_trial_64bit.raw --profile=Win7SP0x64 driverscan `
+ 
+ 
+ ## filescan
+ To find FILE_OBJECTs in physical memory using pool tag scanning, use the filescan command. This will find open files even if a rootkit is hiding the files on disk and if the rootkit hooks some API functions to hide the open handles on a live system. The output shows the physical offset of the FILE_OBJECT, file name, number of pointers to the object, number of handles to the object, and the effective permissions granted to the object.
+ 
+ ` python vol.py -f ~/Desktop/win7_trial_64bit.raw --profile=Win7SP0x64 filescan` 
+ ## mutantscan
+ Malicious software often uses mutex objects for the same purpose as legitimate software. Furthermore, malware might use a mutex to avoid reinfecting the host. 
+ To scan physical memory for KMUTANT objects with pool tag scanning, use the mutantscan command. By default, it displays all objects, but you can pass -s or --silent to only show named mutexes. The CID column contains the process ID and thread ID of the mutex owner if one exists.
+ 
+ ` python -f ~/Desktop/win7_trial_64bit.raw --profile=Win7SP0x64 mutantscan --silent `
+ 
+ 
+ https://www.sans.org/blog/looking-at-mutex-objects-for-malware-discovery-indicators-of-compromise/
